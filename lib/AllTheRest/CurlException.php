@@ -1,2 +1,4 @@
 <?php
-// the Exception
+class AllTheRest_CurlException extends RuntimeException {
+
+}

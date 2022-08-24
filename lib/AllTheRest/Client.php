@@ -17,12 +17,14 @@
  * - request (and transparently decodes) with Accept-Encoding => deflate, gzip (if available, curl automatic)
  * - default timeout is 60s change with AllTheRest_Client::setDefaultCurlOption(CURLOPT_TIMEOUT,null)
  * - CURLOPT_COOKIEJAR and CURLOPT_COOKIEFILE will not work with get() post() etc. because curl_close() never called, use doRequest
+ * - multi headers with same name like Set-Cookie: use FAKE_CURLOPT__RETURN_MULTI_HEADERS = true, (then multiple Headers with same name, like Set-Cookie c1 / Set-Cookie c2 will returned as  'Set-Cookie' => 'c1'."\n".'c2'
  *
  * do you need BasicAuth? use this $headers['Authorization'] = 'Basic '.base64_encode($user.':'.$password);
  */
 class AllTheRest_Client {
 
 	const HEADER__HTTP_CODE = 'Http-Code';
+	const FAKE_CURLOPT__RETURN_MULTI_HEADERS = 'returnMultiHeaders'; // see docs above or parseHeader function
 	static protected $curlHandle = null;
 
 	/**
@@ -257,6 +259,12 @@ class AllTheRest_Client {
 			$curlOptions = $curlOptions + [CURLOPT_ACCEPT_ENCODING => '']; // If an empty string, "", is set, a header containing all supported encoding types is sent.
 
 		}
+
+		$returnMultiHeaders = false;
+		if( isset($curlOptions[self::FAKE_CURLOPT__RETURN_MULTI_HEADERS]) ){
+			$returnMultiHeaders = $curlOptions[self::FAKE_CURLOPT__RETURN_MULTI_HEADERS];
+			unset($curlOptions[self::FAKE_CURLOPT__RETURN_MULTI_HEADERS]);
+		}
 		curl_setopt_array($ch, $curlOptions);
 
 		$curlResponse = curl_exec($ch);
@@ -284,7 +292,7 @@ class AllTheRest_Client {
 		rewind($headerFileHandle);
 		$headersString = fread($headerFileHandle, 10000000);
 		fclose($headerFileHandle);
-		$headers+= self::parseHeaders(trim($headersString));
+		$headers+= self::parseHeaders(trim($headersString), $returnMultiHeaders);
 		// content
 		rewind($contentFileHandle);
 		$content = '';
@@ -319,10 +327,15 @@ class AllTheRest_Client {
 
 
 	/**
+	 * $returnMultiHeaders = true,
+	 * then multiple Headers with same name, like Set-Cookie c1 / Set-Cookie c2 will returned as  'Set-Cookie' => 'c1'."\n".'c2'
+	 * if not set ... only the last value will survive
+	 *
 	 * @param string $headerContent
+	 * @param bool $returnMultiHeaders
 	 * @return array
 	 */
-	static protected function parseHeaders($headerContent){
+	static protected function parseHeaders($headerContent, $returnMultiHeaders=false){
 		$headerStrings = explode("\r\n", $headerContent);
 		$headers = [];
 		foreach( $headerStrings as $headerString ){
@@ -332,7 +345,15 @@ class AllTheRest_Client {
 			}
 			$parts = explode(':', $headerString, 2);
 			if( count($parts)==2 ){
-				$headers[trim($parts[0])] = trim($parts[1]);
+				$name = trim($parts[0]);
+				$value = trim($parts[1]);
+				if( $returnMultiHeaders AND isset($headers[$name]) ){
+					if( $headers[$name]!=$value ){
+						$headers[$name] .= "\n".$value;
+					}
+				}else{
+					$headers[$name] = $value;
+				}
 			}else{
 				$headers[$headerString] = $headerString;
 			}
